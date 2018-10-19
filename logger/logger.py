@@ -11,7 +11,7 @@ class SensorDataLogger:
 
 class InMemorySensorDataLogger(SensorDataLogger):
 
-    def __init__(self, seconds):
+    def __init__(self, seconds=86400):
         self.seconds = seconds
         self.data = {}
         self.data_lock = threading.RLock()
@@ -23,6 +23,7 @@ class InMemorySensorDataLogger(SensorDataLogger):
         while first < len(samples):
             if (now - samples[first]['timestamp']).seconds < seconds:
                 break
+            first += 1
         if first > 0:
             del samples[0:first]
 
@@ -34,6 +35,8 @@ class InMemorySensorDataLogger(SensorDataLogger):
             self.data[sensor] = samples
 
     def get_data(self, sensors=None, timestamp=None):
+        if isinstance(sensors, str):
+            sensors = (sensors,)
         data = {}
         with self.data_lock:
             sensors = sensors or self.data.keys()
@@ -43,4 +46,10 @@ class InMemorySensorDataLogger(SensorDataLogger):
                 for sample in reversed(samples):
                     if sample['timestamp'] <= timestamp:
                         data[sensor] = sample
+                        break
         return data
+
+    def set_data(self, data):
+        for sensor, samples in data.items():
+            for sample in samples:
+                self.log(sensor, sample)

@@ -37,7 +37,7 @@ class ToFileSensorDataLogger(SensorDataLogger):
 
     @staticmethod
     def deserialize_sample(sample):
-        sample['timestamp'] = datetime.fromtimestamp(sample['timestamp'])
+        sample['timestamp'] = datetime.datetime.fromtimestamp(sample['timestamp'])
         return sample
 
     @staticmethod
@@ -57,21 +57,24 @@ class ToFileSensorDataLogger(SensorDataLogger):
         while from_date <= to_date:
             if self.db_exists(self.path, from_date):
                 with TinyDB(self.generate_file_name(self.path, from_date)) as db:
-                    for name in db.tables():
+                    for name in filter(lambda t: t != '_default', db.tables()):
                         table = db.table(name)
                         q = Query()
                         res = table.search((q.timestamp >= from_timestamp.timestamp()) &
                                            (q.timestamp <= to_timestamp.timestamp()))
                         samples = data.get(name, [])
-                        samples.append(res)
+                        for sample in res:
+                            self.deserialize_sample(sample)
+                        samples.extend(res)
                         data[name] = samples
             from_date += datetime.timedelta(days=1)
+        return data
 
     def log(self, sensor, sample):
         sample_date = sample['timestamp'].date()
         if sample_date != self.current_date:
             self.open_db(sample_date)
-            self.remove_outdated(sample_date - datetime.timedelta(days=2))
+            self.remove_outdated(self.path, sample_date - datetime.timedelta(days=2))
         table = self.db.table(sensor)
         table.insert(self.serialize_sample(sample))
 

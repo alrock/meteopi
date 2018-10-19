@@ -4,7 +4,7 @@ import time
 from datetime import datetime
 
 from sensor.sensor import Sensor, SensorException
-from logger import SensorDataLogger
+from logger.logger import SensorDataLogger
 
 
 class DataCollector(threading.Thread):

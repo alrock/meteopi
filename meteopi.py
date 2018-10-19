@@ -1,7 +1,8 @@
 import time
+import threading
 import RPi.GPIO as GPIO
 
-from datetime import datetime
+import datetime
 
 from screen import MeteoScreen
 from sensor.bme280_sensor import BME280Sensor
@@ -11,6 +12,7 @@ from sensor.pms5003_sensor import PMS5003Sensor
 from sensor.bh1750_sensor import BH1750Sensor
 from data_collector import DataCollector
 from logger.logger import InMemorySensorDataLogger
+from logger.file_logger import ToFileSensorDataLogger
 
 
 class MeteoPi:
@@ -20,7 +22,22 @@ class MeteoPi:
         self.collector = DataCollector()
         self.data = InMemorySensorDataLogger()
         self.collector.add_logger(self.data)
-        self.screen_update_interval = 60
+        file_logger = ToFileSensorDataLogger('./db')
+        self.collector.add_logger(file_logger)
+        now = datetime.datetime.now()
+        last24h_data = file_logger.load_data(now - datetime.timedelta(days=1), now)
+        self.data.set_data(last24h_data)
+        self.screen_update_interval = 10
+        self.current_screen_draw = self.draw_screen1
+        self.update_timer_stop = threading.Event()
+        self.screen_update_lock = threading.RLock()
+
+        def timer():
+            while not self.update_timer_stop.is_set():
+                time.sleep(self.screen_update_interval)
+                self.update_screen()
+
+        self.timer_thread = threading.Thread(target=timer)
 
     def __del__(self):
         self.collector.stop()
@@ -79,32 +96,44 @@ class MeteoPi:
             lx_data = (data[sensor_name]['lx'], 0)
         self.screen.draw_screen4(lx_data)
 
+    def update_screen(self):
+        with self.screen_update_lock:
+            self.current_screen_draw()
+
     def start(self):
         self._init_sensors()
         self.screen.draw_countdown_screen(60, 10)
-        self.collector.start()
+        # self.collector.start()
         self.screen.draw_countdown_screen(10, 0)
         self.draw_screen1()
-        last_screen_update = datetime.now()
+        self.timer_thread.start()
         # init button switch
         GPIO.setmode(GPIO.BCM)
         GPIO.setup(4, GPIO.IN, pull_up_down=GPIO.PUD_UP)  # Button to GPIO4
         # main loop
         screen_num = 0
         screen_draw = [self.draw_screen1, self.draw_screen2, self.draw_screen3, self.draw_screen4]
+
+        def cleanup():
+            GPIO.cleanup()
+            self.update_timer_stop.set()
+            self.timer_thread.join()
+
         try:
             while True:
-                button_state = GPIO.input(4)
-                if not button_state:
-                    screen_num = (screen_num + 1) % 4
-                    screen_draw[screen_num]()
-                    time.sleep(0.2)
-                else:
-                    now = datetime.now()
-                    if (now - last_screen_update).seconds >= self.screen_update_interval:
-                        last_screen_update = now
-                        screen_draw[screen_num]()
+                GPIO.wait_for_edge(4, GPIO.FALLING)
+                screen_num = (screen_num + 1) % 4
+                with self.screen_update_lock:
+                    self.current_screen_draw = screen_draw[screen_num]
+                    self.current_screen_draw()
+                time.sleep(0.2)
+                # button_state = GPIO.input(4)
         except Exception as e:
-            GPIO.cleanup()
+            cleanup()
             raise e
+        cleanup()
 
+
+if __name__ == '__main__':
+    app = MeteoPi()
+    app.start()
